@@ -102,22 +102,18 @@ public class WebServiceEngine implements LocalConnector, Startable {
       verifyRequest(action, request);
       action.handler().handle(request, response);
     } catch (IllegalArgumentException e) {
-      sendErrors(response, 400, singletonList(e.getMessage()));
+      sendErrors(request, response, e, 400, singletonList(e.getMessage()));
     } catch (BadRequestException e) {
-      sendErrors(response, 400, e.errors());
+      sendErrors(request, response, e, 400, e.errors());
     } catch (ServerException e) {
-      sendErrors(response, e.httpCode(), singletonList(e.getMessage()));
+      sendErrors(request, response, e, e.httpCode(), singletonList(e.getMessage()));
     } catch (Exception e) {
-      Response.Stream stream = response.stream();
-      if (stream instanceof ServletResponse.ServletStream && ((ServletResponse.ServletStream) stream).response().isCommitted()) {
-        // Request has been aborted by the client, nothing can been done as Tomcat has committed the response
-        LOGGER.debug("Request {} has been aborted by client, error is '{}'", request, e.getMessage());
-        return;
+      if (!isResponsePartiallyStreamed(response)) {
+        LOGGER.error("Fail to process request " + request, e);
       }
-      LOGGER.error("Fail to process request " + request, e);
       // Sending exception message into response is a vulnerability. Error must be
       // displayed only in logs.
-      sendErrors(response, 500, singletonList("An error has occurred. Please contact your administrator"));
+      sendErrors(request, response, e, 500, singletonList("An error has occurred. Please contact your administrator"));
     }
   }
 
@@ -129,8 +125,12 @@ public class WebServiceEngine implements LocalConnector, Startable {
     return controller == null ? null : controller.action(actionKey);
   }
 
-  private static void sendErrors(Response response, int status, List<String> errors) {
+  private static void sendErrors(Request request, Response response, Exception exception, int status, List<String> errors) {
     Response.Stream stream = response.stream();
+    if (isResponsePartiallyStreamed(response)) {
+      LOGGER.debug(String.format("Request %s has been aborted by client or was partially streamed", request), exception);
+      return;
+    }
     if (stream instanceof ServletResponse.ServletStream) {
       if (((ServletResponse.ServletStream) stream).response().isCommitted()) {
         // streaming of response. It's no more possible to clear and reformat the response
@@ -149,6 +149,12 @@ public class WebServiceEngine implements LocalConnector, Startable {
       // Do not hide the potential exception raised in the try block.
       throw Throwables.propagate(e);
     }
+  }
+
+  private static boolean isResponsePartiallyStreamed(Response response) {
+    Response.Stream stream = response.stream();
+    // Request has been aborted by the client or the response was partially streamed, nothing can been done as Tomcat has committed the response
+    return stream instanceof ServletResponse.ServletStream && ((ServletResponse.ServletStream) stream).response().isCommitted();
   }
 
   public static void writeErrors(JsonWriter json, List<String> errorMessages) {

@@ -96,6 +96,10 @@ public class Organization {
       .setDefaultQualityGateUuid(defaultQualityGateUuid);
   }
 
+  public static Organization from(OrganizationDto organizationDto) {
+    return from(organizationDto, true);
+  }
+
   public static Organization from(OrganizationDto organizationDto, boolean organizationsEnabled) {
     return new Organization(
         organizationDto.getUuid(),
